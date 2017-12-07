@@ -1,5 +1,11 @@
 (define-record resource type host port selector)
 
+(define (read-gopher-line #!optional (port (current-input-port)))
+  (let ((l (read-line port)))
+    (if (equal? l ".")
+        '#!eof
+        l)))
+
 (define (format-url res)
   (sprintf "gopher://~a:~a/~a~a"
            (resource-host res)
@@ -19,18 +25,19 @@
                    selector)))
 
 (define menuline-regex
-  (irregex '(: (submatch-named type numeric)
-               (submatch-named title (+ any)) "\t"
-               (submatch-named selector (+ any)) "\t"
+  (irregex '(: (submatch-named type any)
+               (submatch-named title (* any)) "\t"
+               (submatch-named selector (* any)) "\t"
                (submatch-named host (+ any)) "\t"
                (submatch-named port (+ numeric)))))
 
 (define (read-menuline str)
   (let ((match (irregex-match menuline-regex str)))
-    (make-resource (irregex-match-substring match 'type)
-                   (irregex-match-substring match 'host)
-                   (irregex-match-substring match 'port)
-                   (irregex-match-substring match 'selector))))
+    (values (make-resource (string-ref (irregex-match-substring match 'type) 0)
+                           (irregex-match-substring match 'host)
+                           (irregex-match-substring match 'port)
+                           (irregex-match-substring match 'selector))
+            (irregex-match-substring match 'title))))
 
 (define (request res)
   (let*-values (((in out) (tcp-connect (resource-host res) (resource-port res))))

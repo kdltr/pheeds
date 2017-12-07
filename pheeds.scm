@@ -1,51 +1,113 @@
-(use irregex uri-common tcp6)
+(use irregex uri-common tcp6 simple-sha1 sql-de-lite)
 
-(define config-file (make-pathname (get-environment-variable "HOME") ".pheeds"))
 (define email-from "pheeds@upyum.com")
 (define email-to "kooda@upyum.com")
 
-(include "gopher")
+(define config-file (make-pathname (get-environment-variable "HOME") ".pheeds"))
 
-(define (notify line)
-  (let ((res (read-menuline line)))
-    (with-output-to-pipe (sprintf "sendmail -f ~A -t ~A" email-from email-to)
-      (lambda ()
-        (printf "Subject: [pheeds] ~A~%~%~A~%~%Original link: ~A~%"
-                (substring (car (string-split line "\t")) 1)
-                (with-input-from-request res read-string)
-                (format-url res))))))
+(define *db* (open-database config-file))
 
-(define selector+date-regex
-  (irregex
-  '(: bos "0" (* any)
-      (submatch-named year (= 4 numeric)) "-"
-      (submatch-named month (= 2 numeric)) "-"
-      (submatch-named day (= 2 numeric)) (+ any))))
+(include "gopher.scm")
 
-(define (check-phlog url last-max-date)
-  (let ((max-date last-max-date)
-        (res (read-url url)))
+
+;; DATABASE
+
+(define (already-read? hash)
+  (query fetch-value
+         (sql *db* "SELECT * FROM already_read WHERE hash = ?")
+         hash))
+
+(define (mark-read! hash)
+  (exec (sql *db* "INSERT INTO already_read VALUES (?);")
+        hash))
+
+(define (for-each-phlog proc)
+  (for-each
+    (lambda (r) (apply proc r))
+    (query fetch-rows
+           (sql *db* "SELECT * FROM phlogs;"))))
+
+(define (add-phlog! name url)
+  (exec (sql *db* "INSERT INTO phlogs VALUES (?, ?);")
+        name url))
+
+(define (del-phlog! name)
+  (exec (sql *db* "DELETE FROM phlogs WHERE name = ?;")
+        name))
+
+(define (list-phlogs)
+  (query fetch-rows
+         (sql *db* "SELECT * FROM phlogs;")))
+
+
+;; NETWORK
+
+(define (notify! phlog-name res subject)
+  (with-output-to-pipe
+    (sprintf "sendmail -f ~A -t ~A" email-from email-to)
+    (lambda ()
+      (printf "Subject: [pheeds] ~A ~A~%~%~A~%~%Original link: ~A~%"
+              phlog-name
+              subject
+              (with-input-from-request res read-string)
+              (format-url res)))))
+
+(define (notify! phlog-name res subject)
+  (printf "Subject: [pheeds] ~A ~A~%~%~A~%~%Original link: ~A~%"
+          phlog-name
+          subject
+          (with-input-from-request res read-string)
+          (format-url res)))
+
+(define (read-entries url)
+  (let ((res (read-url url)))
     (with-input-from-request res
       (lambda ()
-        (port-for-each
-          (lambda (l)
-            (and-let* ((match (irregex-match selector+date-regex l))
-                       (date (string->number
-                               (string-append
-                                 (irregex-match-substring match 'year)
-                                 (irregex-match-substring match 'month)
-                                 (irregex-match-substring match 'day)))))
-                 (when (> date last-max-date)
-                   (notify l)
-                   (set! max-date (max max-date date)))))
-          read-line)))
-  max-date))
+        (port-map (lambda (s)
+                    (call-with-values
+                      (lambda () (read-menuline s))
+                      list))
+                  read-gopher-line)))))
 
-(let ((updated-config (with-input-from-file config-file
-                        (lambda ()
-                          (port-map (lambda (args)
-                                      (list (car args) (apply check-phlog args)))
-                                    read)))))
-  (with-output-to-file config-file
-    (lambda ()
-      (for-each write updated-config))))
+(define (text-link? res)
+  (char=? (resource-type res) #\0))
+
+
+(define (check-and-notify! phlog-name ents)
+  (for-each
+    (lambda (e)
+      (let ((hash (string->sha1sum (format-url (car e)))))
+        (when (and (text-link? (car e))
+                   (not (already-read? hash)))
+          (apply notify! phlog-name e)
+          (mark-read! hash))))
+    ents))
+
+(define (check-all-phlogs!)
+  (for-each-phlog
+    (lambda (name url)
+      (check-and-notify! name (read-entries url)))))
+
+
+;; COMMAND LINE
+
+(define (process-command-line args)
+  (unless (null? args)
+    (case (string->symbol (car args))
+      ((add)
+       (assert (>= (length args) 3))
+       (add-phlog! (cadr args) (caddr args))
+       (process-command-line (cdddr args)))
+      ((del)
+       (assert (>= (length args) 2))
+       (del-phlog! (cadr args))
+       (process-command-line (cddr args)))
+      ((run)
+       (check-all-phlogs!)
+       (process-command-line (cdr args)))
+      )))
+
+(cond-expand
+  (compiling
+   (process-command-line (command-line-arguments)))
+  (else))
