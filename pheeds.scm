@@ -83,7 +83,9 @@
 (define (check-all-phlogs!)
   (for-each-phlog
     (lambda (name url)
-      (check-and-notify! name (read-entries url)))))
+      (handle-exceptions exn
+          (fprintf (current-error-port) "Unable to fetch phlog \"~A\" at URL: ~A~%" name url)
+        (check-and-notify! name (read-entries url))))))
 
 
 ;; COMMAND LINE
