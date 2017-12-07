@@ -1,4 +1,4 @@
-(use irregex uri-common tcp6 simple-sha1 sql-de-lite)
+(use ports posix data-structures files extras irregex uri-common tcp6 sql-de-lite)
 
 (define email-from "pheeds@upyum.com")
 (define email-to "kooda@upyum.com")
@@ -13,17 +13,17 @@
 ;; DATABASE
 
 (define (create-database!)
-  (exec (sql *db* "CREATE TABLE already_read (hash text primary key not null, unique(hash));"))
+  (exec (sql *db* "CREATE TABLE already_read (url text primary key not null, unique(url));"))
   (exec (sql *db* "CREATE TABLE phlogs (name text, url text, unique(name), unique(url));")))
 
-(define (already-read? hash)
+(define (already-read? url)
   (query fetch-value
-         (sql *db* "SELECT * FROM already_read WHERE hash = ?")
-         hash))
+         (sql *db* "SELECT * FROM already_read WHERE url = ?")
+         url))
 
-(define (mark-read! hash)
+(define (mark-read! url)
   (exec (sql *db* "INSERT INTO already_read VALUES (?);")
-        hash))
+        url))
 
 (define (for-each-phlog proc)
   (for-each
@@ -73,11 +73,11 @@
 (define (check-and-notify! phlog-name ents)
   (for-each
     (lambda (e)
-      (let ((hash (string->sha1sum (format-url (car e)))))
+      (let ((url (format-url (car e))))
         (when (and (text-link? (car e))
-                   (not (already-read? hash)))
+                   (not (already-read? url)))
           (apply notify! phlog-name e)
-          (mark-read! hash))))
+          (mark-read! url))))
     ents))
 
 (define (check-all-phlogs!)
