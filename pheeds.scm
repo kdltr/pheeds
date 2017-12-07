@@ -12,6 +12,10 @@
 
 ;; DATABASE
 
+(define (create-database!)
+  (exec (sql *db* "CREATE TABLE already_read (hash text primary key not null, unique(hash));"))
+  (exec (sql *db* "CREATE TABLE phlogs (name text, url text, unique(name), unique(url));")))
+
 (define (already-read? hash)
   (query fetch-value
          (sql *db* "SELECT * FROM already_read WHERE hash = ?")
@@ -46,18 +50,11 @@
   (with-output-to-pipe
     (sprintf "sendmail -f ~A -t ~A" email-from email-to)
     (lambda ()
-      (printf "Subject: [pheeds] ~A ~A~%~%~A~%~%Original link: ~A~%"
+      (printf "Subject: [pheeds] ~A - ~A~%~%~A~%~%Original link: ~A~%"
               phlog-name
               subject
               (with-input-from-request res read-string)
               (format-url res)))))
-
-(define (notify! phlog-name res subject)
-  (printf "Subject: [pheeds] ~A ~A~%~%~A~%~%Original link: ~A~%"
-          phlog-name
-          subject
-          (with-input-from-request res read-string)
-          (format-url res)))
 
 (define (read-entries url)
   (let ((res (read-url url)))
@@ -104,6 +101,9 @@
        (process-command-line (cddr args)))
       ((run)
        (check-all-phlogs!)
+       (process-command-line (cdr args)))
+      ((create)
+       (create-database!)
        (process-command-line (cdr args)))
       )))
 
